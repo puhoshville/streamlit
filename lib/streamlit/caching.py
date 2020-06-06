@@ -30,6 +30,7 @@ from collections import namedtuple
 from typing import Any, Dict, Optional
 
 from cachetools import TTLCache
+from pymemcache import MemcacheError
 
 from streamlit import config
 from streamlit import file_util
@@ -307,16 +308,30 @@ def _write_to_disk_cache(key, value):
             pass
         raise CacheError("Unable to write to cache: %s" % e)
 
+def _read_from_remote_cache(memcached_instance, key):
+    """Read value from Memcached instance"""
+    raise NotImplementedError("Not implemented")
 
-def _read_from_cache(
-    mem_cache, key, persist, allow_output_mutation, func_or_code, hash_funcs=None
-):
+
+def _write_to_remote_cache(memcached_instance, key, value):
+    """Write key-value pair to Memcached instance"""
+    raise NotImplementedError("Not implemented")
+
+
+def _read_from_cache(mem_cache, key, persist, allow_output_mutation, func_or_code, hash_funcs=None, memcached_instance=None):
     """Read a value from the cache.
 
     Our goal is to read from memory if possible. If the data was mutated (hash
     changed), we show a warning. If reading from memory fails, we either read
     from disk or rerun the code.
     """
+    if memcached_instance:
+        try:
+            return _read_from_remote_cache(memcached_instance, key)
+
+        except MemcacheError as e:
+            pass
+
     try:
         return _read_from_mem_cache(
             mem_cache, key, allow_output_mutation, func_or_code, hash_funcs
@@ -330,20 +345,20 @@ def _read_from_cache(
         if persist:
             value = _read_from_disk_cache(key)
             _write_to_mem_cache(
-                mem_cache, key, value, allow_output_mutation, func_or_code, hash_funcs
+                mem_cache, key, value, allow_output_mutation, func_or_code, hash_funcs, memcached_instance=memcached_instance
             )
             return value
         raise e
 
 
-def _write_to_cache(
-    mem_cache, key, value, persist, allow_output_mutation, func_or_code, hash_funcs=None
-):
+def _write_to_cache(mem_cache, key, value, persist, allow_output_mutation, func_or_code, hash_funcs=None, memcached_instance=None):
     _write_to_mem_cache(
         mem_cache, key, value, allow_output_mutation, func_or_code, hash_funcs
     )
     if persist:
         _write_to_disk_cache(key, value)
+    elif memcached_instance:
+        _write_to_remote_cache(memcached_instance, key, value)
 
 
 def cache(
@@ -355,6 +370,7 @@ def cache(
     hash_funcs=None,
     max_entries=None,
     ttl=None,
+    memcached_instance=None,
 ):
     """Function decorator to memoize function executions.
 
@@ -396,6 +412,7 @@ def cache(
         The maximum number of seconds to keep an entry in the cache, or
         None if cache entries should not expire. The default is None.
 
+    memcached_instance : pymemcache.client.Client object
     Example
     -------
     >>> @st.cache
@@ -561,6 +578,7 @@ def cache(
                     allow_output_mutation=allow_output_mutation,
                     func_or_code=func,
                     hash_funcs=hash_funcs,
+                    memcached_instance=memcached_instance,
                 )
                 _LOGGER.debug("Cache hit: %s", func)
 
@@ -582,6 +600,7 @@ def cache(
                     allow_output_mutation=allow_output_mutation,
                     func_or_code=func,
                     hash_funcs=hash_funcs,
+                    memcached_instance=memcached_instance,
                 )
 
             return return_value
